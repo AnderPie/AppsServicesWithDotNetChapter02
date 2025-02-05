@@ -1,5 +1,9 @@
 ﻿using Microsoft.Data.SqlClient; // To use SQLConnection etc.
 using System.Data; // To use CommandType for working with ADO.NET command types so that we can run commands and receive results from Northwind tables
+using System.Text.Json; // To support serializing to JSON with Utf8JsonWriter and JsonSerializer
+using static System.Environment; // So that the serialized date we produce can be given a file to live in
+using static System.IO.Path; // So that the serialized date we produce can be given a file to live in
+using Northwind.Models; // To use our .NET classes based on the Northwind objects such as product, order etc.
 
 /*
  * Take user input to connect to database
@@ -85,8 +89,10 @@ connection.InfoMessage += Connection_InfoMessage;
 try{
     WriteLine("Opening connection. Please wait up to {0} seconds.", builder.ConnectTimeout);
     WriteLine();
-    connection.Open();
+    // connection.Open(); 
+    await connection.OpenAsync(); // Asynchronous open
     WriteLine($"SQL Server Version: {connection.ServerVersion}");
+    connection.StatisticsEnabled = true;
 }
 catch(SqlException ex){
 WriteLineInColor($"SQL exception: {ex.Message}", ConsoleColor.Red);
@@ -99,19 +105,115 @@ return;
 
 // Create a command
 SqlCommand command = connection.CreateCommand();
-command.CommandText = "SELECT ProductID, ProductName, UnitPrice FROM Products";
+
+#region Solicit a unit price
+Write("Enter a unit price: ");
+string? priceText = ReadLine();
+
+if(!decimal.TryParse(priceText, out decimal price)){
+    WriteLine("You must enter a valid unit price");
+    return;
+}
+#endregion
+
+#region Choose between running the stored procedure or the console defined method
+WriteLineInColor("Would you like to run the stored procedure in the database or the method in the console app?");
+WriteLine("  1 - Stored Procedure");
+WriteLine("  2 - Console App Method");
+key = ReadKey().Key;
+SqlParameter p1, p2 = new(), p3 = new();
+
+if(key == ConsoleKey.D1 || key == ConsoleKey.NumPad1)
+{
+    command.CommandType = CommandType.StoredProcedure;
+    command.CommandText = "GetExpensiveProducts";
+
+    p1 = new(){
+        ParameterName = "price",
+        SqlDbType = SqlDbType.Money,
+        SqlValue = price
+    };
+
+    p2 = new(){
+        Direction = ParameterDirection.Output,
+        ParameterName = "count",
+        SqlDbType = SqlDbType.Int
+    };
+
+    p3 = new(){
+        Direction = ParameterDirection.ReturnValue,
+        ParameterName = "rv",
+        SqlDbType = SqlDbType.Int
+    };
+
+    command.Parameters.AddRange(new[] {p1, p2, p3});
+}
+else if(key == ConsoleKey.D2 || key == ConsoleKey.NumPad2)
+{
+    GetExpensiveProduct(command, price);
+}
+else
+{
+    WriteLine("You did not enter a valid option.");
+    return;
+}
+#endregion
 
 // Create data reader to write results of command to Console
-
-SqlDataReader reader = command.ExecuteReader();
+SqlDataReader reader = await command.ExecuteReaderAsync();
 
 string horizontalLine = new('-', 60);
 WriteLineInColor(horizontalLine, ConsoleColor.Magenta);
 WriteLine("| {0,5} | {1, -35} | {2,10} |", arg0: "Id", arg1: "Name", arg2: "Price");
 WriteLine(horizontalLine);
-while(reader.Read()){
-    WriteLine("| {0,5} | {1, -35} | {2,10:C} |", reader.GetInt32("ProductId"), reader.GetString("ProductName"), reader.GetDecimal("UnitPrice"));
+
+#region Define JSON Serialization path and instantiate serializer
+string jsonPath = Combine(CurrentDirectory, "products.json");
+List<Product> products = new(capacity: 77); // Define a new list to store our products
+await using(FileStream jsonStream = File.Create(jsonPath))
+{
+    Utf8JsonWriter jsonWriter = new(jsonStream);
+    jsonWriter.WriteStartArray();
+    while(await reader.ReadAsync()){
+
+        
+        Product product = new()
+        {
+            ProductId = await reader.GetFieldValueAsync<int>("ProductId"),
+            ProductName = await reader.GetFieldValueAsync<string>("ProductName"),
+            UnitPrice = await reader.GetFieldValueAsync<decimal>("UnitPrice")
+        };
+
+        products.Add(product);
+        
+        WriteLine("| {0,5} | {1, -35} | {2,10:C} |", 
+        await reader.GetFieldValueAsync<int>("ProductId"), 
+        await reader.GetFieldValueAsync<string>("ProductName"), 
+        await reader.GetFieldValueAsync<decimal>("UnitPrice"));
+
+        jsonWriter.WriteStartObject();
+        jsonWriter.WriteNumber("productId", await reader.GetFieldValueAsync<int>("ProductId"));
+        jsonWriter.WriteString("productName", await reader.GetFieldValueAsync<string>("ProductName"));
+        jsonWriter.WriteNumber("unitPrice", await reader.GetFieldValueAsync<decimal>("UnitPrice"));
+        jsonWriter.WriteEndObject();
+    }
+    jsonWriter.WriteEndArray();
+    jsonWriter.Flush();
+    jsonStream.Close();
+    WriteLine(horizontalLine);
 }
-WriteLine(horizontalLine);
+WriteLineInColor($"Written to: {jsonPath}", ConsoleColor.DarkGreen);
 #endregion
-connection.Close();
+
+#endregion
+
+#region  Output statistics
+WriteLineInColor(JsonSerializer.Serialize(products), ConsoleColor.Magenta);
+OutPutStatistics(connection);
+#endregion
+await reader.CloseAsync();
+if(key is ConsoleKey.D2 or ConsoleKey.NumPad2){
+    WriteLine($"Output count: {p2.Value}");
+    WriteLine($"Output count: {p3.Value}");
+}
+await connection.CloseAsync();
