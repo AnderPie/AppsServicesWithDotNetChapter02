@@ -4,7 +4,7 @@
 Microsoft.Data.SqlClient, it uses ADO.NET for extremely performant SQL server work
 
 ## What is the safest way to define a database connection string?
-Using KeyVault, a similar password manager, environment variables, or perhap an encrypted config file.
+Using KeyVault, a similar password manager. environment variables are OK but usually unencrypted, so if your machine is compromised you are in big trouble.
 
 ## What must T-SQL parameters and variables be prefixed with?
 @
