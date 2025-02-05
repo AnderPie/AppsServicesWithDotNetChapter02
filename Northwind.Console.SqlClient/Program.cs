@@ -1,4 +1,5 @@
 ﻿using Microsoft.Data.SqlClient; // To use SQLConnection etc.
+using System.Data; // To use CommandType for working with ADO.NET command types so that we can run commands and receive results from Northwind tables
 
 /*
  * Take user input to connect to database
@@ -91,5 +92,26 @@ catch(SqlException ex){
 WriteLineInColor($"SQL exception: {ex.Message}", ConsoleColor.Red);
 return;
 }
+#endregion
+
+#region Run some commands
+
+
+// Create a command
+SqlCommand command = connection.CreateCommand();
+command.CommandText = "SELECT ProductID, ProductName, UnitPrice FROM Products";
+
+// Create data reader to write results of command to Console
+
+SqlDataReader reader = command.ExecuteReader();
+
+string horizontalLine = new('-', 60);
+WriteLineInColor(horizontalLine, ConsoleColor.Magenta);
+WriteLine("| {0,5} | {1, -35} | {2,10} |", arg0: "Id", arg1: "Name", arg2: "Price");
+WriteLine(horizontalLine);
+while(reader.Read()){
+    WriteLine("| {0,5} | {1, -35} | {2,10:C} |", reader.GetInt32("ProductId"), reader.GetString("ProductName"), reader.GetDecimal("UnitPrice"));
+}
+WriteLine(horizontalLine);
 #endregion
 connection.Close();
